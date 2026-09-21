@@ -1,5 +1,9 @@
 import type { StepAttempt } from "../core/step-attempt.js";
-import { StepHistory, StepLimitExceededError } from "./step-history.js";
+import {
+  StepHistory,
+  StepLimitExceededError,
+  WORKFLOW_STEP_LIMIT,
+} from "./step-history.js";
 import { describe, test, expect } from "vitest";
 
 describe("StepHistory", () => {
@@ -108,6 +112,29 @@ describe("StepHistory", () => {
       history.ensureCanRecordNewAttempt();
       history.recordNewAttempt(
         createMockStepAttempt({ id: "a", stepName: "a", status: "running" }),
+      );
+      expect(() => {
+        history.ensureCanRecordNewAttempt();
+      }).toThrow(StepLimitExceededError);
+    });
+
+    test("falls back to the fork's default step limit", () => {
+      const history = new StepHistory({
+        attempts: Array.from({ length: WORKFLOW_STEP_LIMIT - 1 }, (_, index) =>
+          createMockStepAttempt({
+            id: `a${String(index)}`,
+            stepName: `a${String(index)}`,
+            status: "completed",
+          }),
+        ),
+      });
+      history.ensureCanRecordNewAttempt();
+      history.recordNewAttempt(
+        createMockStepAttempt({
+          id: "last",
+          stepName: "last",
+          status: "running",
+        }),
       );
       expect(() => {
         history.ensureCanRecordNewAttempt();
