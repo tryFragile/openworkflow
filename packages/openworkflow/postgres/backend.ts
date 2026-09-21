@@ -43,15 +43,21 @@ import {
   newPostgres,
   newPostgresMaxOne,
   Postgres,
+  PostgresOptions,
   PostgresFragment,
   migrate,
   DEFAULT_SCHEMA,
   assertValidSchemaName,
 } from "./postgres.js";
 
-interface BackendPostgresOptions {
+export interface BackendPostgresOptions {
   namespaceId?: string;
   runMigrations?: boolean;
+  /**
+   * Driver options applied to the migration and runtime pools, including
+   * dynamic passwords for IAM authentication.
+   */
+  postgresOptions?: PostgresOptions;
   schema?: string;
 }
 
@@ -82,7 +88,7 @@ export class BackendPostgres implements Backend {
     url: string,
     options?: BackendPostgresOptions,
   ): Promise<BackendPostgres> {
-    const { namespaceId, runMigrations, schema } = {
+    const { namespaceId, runMigrations, schema, postgresOptions } = {
       namespaceId: DEFAULT_NAMESPACE_ID,
       runMigrations: true,
       schema: DEFAULT_SCHEMA,
@@ -92,12 +98,15 @@ export class BackendPostgres implements Backend {
 
     try {
       if (runMigrations) {
-        const pgForMigrate = newPostgresMaxOne(url);
-        await migrate(pgForMigrate, schema);
-        await pgForMigrate.end();
+        const pgForMigrate = newPostgresMaxOne(url, postgresOptions);
+        try {
+          await migrate(pgForMigrate, schema);
+        } finally {
+          await pgForMigrate.end();
+        }
       }
 
-      const pg = newPostgres(url);
+      const pg = newPostgres(url, postgresOptions);
       return new BackendPostgres(pg, namespaceId, schema);
     } catch (error) {
       throw wrapError(
@@ -118,7 +127,7 @@ export class BackendPostgres implements Backend {
    */
   static fromPool(
     pg: Postgres,
-    options?: Omit<BackendPostgresOptions, "runMigrations">,
+    options?: Omit<BackendPostgresOptions, "runMigrations" | "postgresOptions">,
   ): BackendPostgres {
     const { namespaceId, schema } = {
       namespaceId: DEFAULT_NAMESPACE_ID,

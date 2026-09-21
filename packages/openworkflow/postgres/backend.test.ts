@@ -7,7 +7,7 @@ import {
   newPostgresMaxOne,
 } from "./postgres.js";
 import { randomUUID } from "node:crypto";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 test("it is a test file (workaround for sonarjs/no-empty-test-file linter)", () => {
   expect(testBackend).toBeTypeOf("function");
@@ -45,6 +45,78 @@ describe("BackendPostgres.connect errors", () => {
         schema: "a".repeat(64),
       }),
     ).rejects.toThrow(/at most 63 bytes/i);
+  });
+});
+
+describe("BackendPostgres dynamic passwords", () => {
+  test("uses a fresh password for migrations and every runtime login", async () => {
+    const password = vi.fn(() => Promise.resolve("postgres"));
+    const applicationName = `password_test_${randomUUID()}`;
+    const url = new URL(DEFAULT_POSTGRES_URL);
+    // A URL credential the dynamic password must override on every login.
+    url.password = randomUUID();
+    const backend = await BackendPostgres.connect(url.toString(), {
+      namespaceId: randomUUID(),
+      postgresOptions: {
+        password,
+        max: 1,
+        idle_timeout: 0.01,
+        connection: { application_name: applicationName },
+      },
+    });
+    const pg = newPostgresMaxOne(DEFAULT_POSTGRES_URL);
+
+    try {
+      expect(password).toHaveBeenCalledTimes(1);
+      expect(
+        await backend.getWorkflowRun({ workflowRunId: randomUUID() }),
+      ).toBeNull();
+      expect(password).toHaveBeenCalledTimes(2);
+      // Wait for the idle runtime connection to close, forcing a new login.
+      await vi.waitFor(async () => {
+        const connections = await pg`
+          SELECT pid FROM pg_stat_activity WHERE application_name = ${applicationName}
+        `;
+        expect(connections).toHaveLength(0);
+      });
+      expect(
+        await backend.getWorkflowRun({ workflowRunId: randomUUID() }),
+      ).toBeNull();
+      expect(password).toHaveBeenCalledTimes(3);
+    } finally {
+      await backend.stop();
+      await pg.end();
+    }
+  });
+
+  test("supports synchronous passwords without running migrations", async () => {
+    const password = vi.fn(() => "postgres");
+    const backend = await BackendPostgres.connect(DEFAULT_POSTGRES_URL, {
+      namespaceId: randomUUID(),
+      runMigrations: false,
+      postgresOptions: { password },
+    });
+
+    try {
+      expect(password).not.toHaveBeenCalled();
+      expect(
+        await backend.getWorkflowRun({ workflowRunId: randomUUID() }),
+      ).toBeNull();
+      expect(password).toHaveBeenCalledTimes(1);
+    } finally {
+      await backend.stop();
+    }
+  });
+
+  test("closes the migration pool when Postgres rejects the password", async () => {
+    const password = vi.fn(() => Promise.resolve("invalid-password"));
+
+    await expect(
+      BackendPostgres.connect(DEFAULT_POSTGRES_URL, {
+        postgresOptions: { password },
+      }),
+    ).rejects.toThrow(/password authentication failed/);
+    expect(password).toHaveBeenCalledTimes(1);
   });
 });
 
