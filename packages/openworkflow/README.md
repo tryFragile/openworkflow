@@ -1,5 +1,9 @@
 # OpenWorkflow
 
+Fragile's SDK is published as `@tryfragile/openworkflow` on GitHub Packages. See
+the [fork guide](https://github.com/tryFragile/openworkflow/blob/feature/list-workflow-runs-by-status/FRAGILE.md)
+for installation, PostgreSQL connection options, and IAM authentication.
+
 [![npm](https://img.shields.io/npm/v/openworkflow)](https://www.npmjs.com/package/openworkflow)
 [![build](https://img.shields.io/github/actions/workflow/status/openworkflowdev/openworkflow/ci.yaml)](https://github.com/openworkflowdev/openworkflow/actions/workflows/ci.yaml)
 [![coverage](https://img.shields.io/codecov/c/github/openworkflowdev/openworkflow)](https://codecov.io/github/openworkflowdev/openworkflow)

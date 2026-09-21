@@ -27,6 +27,7 @@
     "posthog",
     "sonarjs",
     "trivago",
+    "tryfragile",
 
     // postgres
     "hashtextextended",
@@ -45,6 +46,7 @@
     "wakeups",
 
     // usernames & contributor names
+    "cfelegy",
     "mariusflorescu",
     "Nagpal",
     "nathancahill",
