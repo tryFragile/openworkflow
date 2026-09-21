@@ -1,1 +1,4 @@
-export { BackendPostgres } from "./postgres/backend.js";
+export {
+  BackendPostgres,
+  type BackendPostgresOptions,
+} from "./postgres/backend.js";
