@@ -4,8 +4,11 @@ import {
   getCachedStepAttempt,
 } from "../core/step-attempt.js";
 
-/** Maximum number of step attempts allowed for a single workflow run. */
-export const WORKFLOW_STEP_LIMIT = 1000;
+/**
+ * Maximum number of step attempts allowed for a single workflow run. Raised
+ * from the upstream default of 1,000 by the Fragile fork; see FRAGILE.md.
+ */
+export const WORKFLOW_STEP_LIMIT = 5000;
 
 /** Error code used when a workflow run exceeds the step-attempt limit. */
 export const STEP_LIMIT_EXCEEDED_ERROR_CODE = "STEP_LIMIT_EXCEEDED";
