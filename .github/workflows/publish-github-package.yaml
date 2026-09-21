@@ -1,0 +1,56 @@
+name: Publish GitHub package
+permissions:
+  contents: read
+on:
+  workflow_dispatch:
+concurrency:
+  group: publish-github-package
+  cancel-in-progress: false
+jobs:
+  publish:
+    # Only publish the fork's default branch, never upstream or feature branches.
+    if: github.repository == 'tryFragile/openworkflow' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - run: npm ci
+      - run: npm run ci
+      - name: Authenticate with GitHub Packages
+        run: |
+          {
+            echo "@tryfragile:registry=https://npm.pkg.github.com"
+            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
+          } >> "$HOME/.npmrc"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage the SDK under the Fragile scope
+        run: npm run publish:stage-scoped
+      - name: Publish the SDK to GitHub Packages
+        run: npm publish "$RUNNER_TEMP/github-package/package" --ignore-scripts
+      - name: Verify the published package
+        run: |
+          version=$(node -p 'require("./packages/openworkflow/package.json").version')
+          mkdir -p "$RUNNER_TEMP/published"
+          npm view "@tryfragile/openworkflow@$version" --json > "$RUNNER_TEMP/published/package-metadata.json"
+          npm pack "@tryfragile/openworkflow@$version" --ignore-scripts --pack-destination "$RUNNER_TEMP/published"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: published-openworkflow
+          path: ${{ runner.temp }}/published/
+          retention-days: 7

@@ -5,9 +5,12 @@ on:
   push:
     branches:
       - main
+      # the Fragile fork's default branch
+      - feature/list-workflow-runs-by-status
   pull_request:
     branches:
       - main
+      - feature/list-workflow-runs-by-status
 jobs:
   ci:
     runs-on: ubuntu-latest

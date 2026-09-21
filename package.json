@@ -24,6 +24,7 @@
     "openworkflow": "tsx ./apps/cli/cli.ts",
     "pghero": "sh ./packages/openworkflow/postgres/scripts/pghero.sh",
     "prepare": "husky",
+    "publish:stage-scoped": "tsx ./scripts/stage-scoped-sdk.ts",
     "squawk": "tsx ./packages/openworkflow/postgres/scripts/squawk.ts",
     "test": "vitest run",
     "test:bun": "bun run --bun vitest run",
