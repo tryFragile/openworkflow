@@ -77,10 +77,10 @@ that driver behavior. PostgreSQL authentication failures do reject normally.
 
 ## Publishing and consuming
 
-`packages/openworkflow/package.json` is set to `0.9.2`, the first GitHub Packages
-release. Publishing is never automatic: the workflow is `workflow_dispatch` only,
-runs on the default branch, and GitHub Packages rejects republished versions, so
-every release needs a version bump first.
+`0.9.2` is the first GitHub Packages release. Publishing is never automatic: the
+workflow is `workflow_dispatch` only, runs on the default branch, and GitHub
+Packages rejects republished versions, so every release needs a version bump
+first.
 
 1. Bump the SDK version and run `npm install` to update `package-lock.json`.
 2. Run `npm run ci` and push the tested change to this fork.
@@ -103,8 +103,49 @@ Consumers can retain their existing imports with an npm alias:
 ```
 
 Map `@tryfragile` to `https://npm.pkg.github.com` in the consumer's `.npmrc`.
-Package installation requires authentication and package read access. Grant
-consumer repositories such as `tryFragile/cxp` Actions access in package settings.
+
+### The package is private even though this fork is public
+
+The GitHub Packages npm registry supports granular permissions, so package
+visibility is set independently of the linked repository — only the Apache Maven
+and Gradle registries inherit repository visibility. Newly published packages
+default to private, so `@tryfragile/openworkflow` is private despite living in a
+public fork. Nothing needs changing to keep it that way.
+
+The fork's source is public regardless, so a private package protects no secret.
+It does mean access is never implicit:
+
+- Every install context needs a token. The registry returns `401` for
+  unauthenticated requests, so this applies to CI, local development, and
+  third-party builders such as Vercel alike.
+- Each consuming repository needs read access granted in the package settings
+  before its Actions `GITHUB_TOKEN` can resolve the package. `tryFragile/cxp` is
+  the current consumer.
+- Developers need a personal access token with `read:packages`.
+
+### Consumers using Bun
+
+Bun honors `minimumReleaseAge`, which refuses any package published more recently
+than the configured window. Because GitHub Packages holds only `0.9.2` onwards,
+there is no older version to fall back to, so `bun install` fails outright rather
+than resolving something stale:
+
+```
+error: No version matching "@tryfragile/openworkflow" found for specifier
+"npm:@tryfragile/openworkflow@^0.9.2" (blocked by minimum-release-age: 604800 seconds)
+```
+
+Exclude this package in `bunfig.toml`:
+
+```toml
+[install]
+minimumReleaseAge = 604800
+minimumReleaseAgeExcludes = ["@tryfragile/openworkflow"]
+```
+
+The exclude must name the real package, `@tryfragile/openworkflow`. Bun matches
+on the resolved name, not the dependency key, so excluding the alias
+`openworkflow` has no effect.
 
 See [postgres.js dynamic passwords](https://github.com/porsager/postgres#dynamic-passwords)
 and [GitHub's npm registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry).

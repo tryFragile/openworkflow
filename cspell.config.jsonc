@@ -19,6 +19,7 @@
     // libraries & packages
     "arktype",
     "bullmq",
+    "bunfig",
     "bunx",
     "Mintlify",
     "nypm",
