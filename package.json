@@ -34,6 +34,9 @@
     "typecheck": "tsc --noEmit",
     "worker": "npm run openworkflow worker start"
   },
+  "overrides": {
+    "handlebars@>=4.7.0 <4.7.10": "4.7.10"
+  },
   "dependencies": {
     "openworkflow": "^0.8.1"
   },
