@@ -1764,6 +1764,154 @@ describe("StepExecutor", () => {
     expect(lateAttempts[0]?.status).toBe("completed");
   });
 
+  test("fences stale child completions when the same worker reclaims a parked parent", async () => {
+    const backend = await createTestBackend();
+    const client = new OpenWorkflow({ backend });
+    const child = client.defineWorkflow<string, string>(
+      { name: `workflow-stale-completion-child-${randomUUID()}` },
+      ({ input }) => input,
+    );
+    const children = await Promise.all([
+      child.run("first"),
+      child.run("second"),
+    ]);
+    const worker = client.newWorker({ concurrency: 2 });
+    for (const handle of children) {
+      await tickUntilTerminal(backend, worker, handle.workflowRun.id, 200, 10);
+    }
+
+    const lateBranches: Promise<string>[] = [];
+    const parent = client.defineWorkflow(
+      { name: `workflow-stale-completion-parent-${randomUUID()}` },
+      async ({ step }) => {
+        const first = step.runWorkflow(child.workflow.spec, "first", {
+          name: "first",
+        });
+        const second = step.runWorkflow(child.workflow.spec, "second", {
+          name: "second",
+        });
+        lateBranches.push(second);
+        return await Promise.all([first, second]);
+      },
+    );
+    const parentHandle = await parent.run();
+    const workerId = randomUUID();
+    const firstClaim = await backend.claimWorkflowRun({
+      workerId,
+      leaseDurationMs: 5000,
+    });
+    if (!firstClaim) throw new Error("Expected parent claim");
+    expect(firstClaim.id).toBe(parentHandle.workflowRun.id);
+
+    for (const [index, name] of ["first", "second"].entries()) {
+      const handle = children[index];
+      if (!handle) throw new Error("Expected child handle");
+      const attempt = await backend.createStepAttempt({
+        workflowRunId: firstClaim.id,
+        workerId,
+        stepName: name,
+        kind: "workflow",
+        config: {},
+        context: {
+          kind: "workflow",
+          timeoutAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      });
+      await backend.setStepAttemptChildWorkflowRun({
+        workflowRunId: firstClaim.id,
+        workerId,
+        stepAttemptId: attempt.id,
+        childWorkflowRunNamespaceId: handle.workflowRun.namespaceId,
+        childWorkflowRunId: handle.workflowRun.id,
+      });
+    }
+
+    const oldRead = Promise.withResolvers<null>();
+    const newRead = Promise.withResolvers<null>();
+    const newReadStarted = Promise.withResolvers<null>();
+    let firstReads = 0;
+    let secondReads = 0;
+    const originalGet = backend.getWorkflowRun.bind(backend);
+    const getSpy = vi
+      .spyOn(backend, "getWorkflowRun")
+      .mockImplementation(async (params) => {
+        const secondReadIndex =
+          params.workflowRunId === children[1].workflowRun.id
+            ? ++secondReads
+            : 0;
+        const run = await originalGet(params);
+        if (
+          params.workflowRunId === children[0].workflowRun.id &&
+          firstReads++ === 0 &&
+          run
+        ) {
+          // A sibling observes the child before it finishes and parks the parent.
+          return { ...run, status: "running", finishedAt: null, output: null };
+        }
+        if (params.workflowRunId === children[1].workflowRun.id) {
+          if (secondReadIndex === 1) {
+            await oldRead.promise;
+          } else {
+            newReadStarted.resolve(null);
+            await newRead.promise;
+          }
+        }
+        return run;
+      });
+
+    try {
+      const execution = {
+        backend,
+        workflowFn: parent.workflow.fn,
+        workflowVersion: null,
+        workerId,
+        retryPolicy: DEFAULT_WORKFLOW_RETRY_POLICY,
+      };
+      await executeWorkflow({ ...execution, workflowRun: firstClaim });
+      // Real child completion reconciliation makes the parked parent available.
+      const secondClaim = await backend.claimWorkflowRun({
+        workerId,
+        leaseDurationMs: 5000,
+      });
+      if (!secondClaim) throw new Error("Expected parent replay claim");
+      expect(secondClaim.id).toBe(firstClaim.id);
+      const replay = executeWorkflow({
+        ...execution,
+        workflowRun: secondClaim,
+      });
+      await newReadStarted.promise;
+
+      // The old read resumes while the same worker owns the new execution.
+      // Its completion must not consume the step the replay is completing.
+      oldRead.resolve(null);
+      const lateBranch = lateBranches[0];
+      if (!lateBranch) throw new Error("Expected late workflow branch");
+      const lateError = await lateBranch.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      newRead.resolve(null);
+      await replay;
+
+      const run = await originalGet({ workflowRunId: firstClaim.id });
+      expect(run?.status, JSON.stringify(run?.error)).toBe("completed");
+      await expect(parentHandle.result()).resolves.toEqual(["first", "second"]);
+      expect(lateError).toBeInstanceOf(Error);
+      expect(lateError).toHaveProperty("name", "StaleExecutionBranchError");
+      const attempts = await backend.listStepAttempts({
+        workflowRunId: firstClaim.id,
+      });
+      expect(attempts.data).toHaveLength(2);
+      expect(
+        attempts.data.every((attempt) => attempt.status === "completed"),
+      ).toBe(true);
+    } finally {
+      oldRead.resolve(null);
+      newRead.resolve(null);
+      getSpy.mockRestore();
+    }
+  });
+
   test("supports parallel workflows via Promise.all", async () => {
     const backend = await createTestBackend();
     const client = new OpenWorkflow({ backend });
@@ -2150,7 +2298,10 @@ describe("StepExecutor", () => {
         { maxWaitMs: 20_000 },
       );
 
-      expect(status).toBe("completed");
+      const finishedRun = await backend.getWorkflowRun({
+        workflowRunId: handle.workflowRun.id,
+      });
+      expect(status, JSON.stringify(finishedRun?.error)).toBe("completed");
       const result = await handle.result();
       expect(result.childResults).toHaveLength(300);
       expect(result.notifyMessage).toBe("Completed 300 child workflows");

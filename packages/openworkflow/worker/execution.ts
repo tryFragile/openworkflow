@@ -416,6 +416,10 @@ class StepExecutor implements StepApi {
     stepAttemptId: string,
     output: JsonValue | null,
   ): Promise<StepAttempt> {
+    // A child read or function may finish after a sibling parked this execution.
+    // Worker IDs can be reused by a replay, so the backend ownership check alone
+    // cannot distinguish that stale callback from the new execution.
+    this.assertExecutionActive();
     const completed = await this.backend.completeStepAttempt({
       workflowRunId: this.workflowRunId,
       stepAttemptId,
