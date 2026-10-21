@@ -6,6 +6,8 @@
     "@openworkflow/cli",
     "@tanstack/react-router-ssr-query",
     "@tanstack/router-plugin",
+    // Root pin makes npm 11 apply the DOMPurify override to workspace Monaco.
+    "monaco-editor",
     "openworkflow",
     "postgres",
     "web-vitals"

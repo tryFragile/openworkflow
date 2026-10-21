@@ -1,7 +1,9 @@
 import { useTheme } from "@/components/providers/theme-provider";
 import { cn } from "@/lib/utils";
-import MonacoEditor from "@monaco-editor/react";
-import { useMemo } from "react";
+import { ClientOnly } from "@tanstack/react-router";
+import { lazy, Suspense, useMemo } from "react";
+
+const MonacoEditor = lazy(() => import("@/lib/monaco-editor"));
 
 const LINE_HEIGHT = 18;
 
@@ -52,37 +54,41 @@ export function MonacoJsonEditor({
       )}
       style={{ height: editorHeight }}
     >
-      <MonacoEditor
-        defaultLanguage="json"
-        height={editorHeight}
-        value={value}
-        theme={theme === "dark" ? "vs-dark" : "vs"}
-        onChange={(nextValue) => {
-          if (readOnly || !onChange) {
-            return;
-          }
+      <ClientOnly fallback="Loading editor…">
+        <Suspense fallback="Loading editor…">
+          <MonacoEditor
+            defaultLanguage="json"
+            height={editorHeight}
+            value={value}
+            theme={theme === "dark" ? "vs-dark" : "vs"}
+            onChange={(nextValue) => {
+              if (readOnly || !onChange) {
+                return;
+              }
 
-          onChange(nextValue ?? "");
-        }}
-        options={{
-          automaticLayout: true,
-          domReadOnly: readOnly,
-          folding: true,
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 12,
-          glyphMargin: false,
-          lineDecorationsWidth: 8,
-          lineHeight: LINE_HEIGHT,
-          minimap: { enabled: false },
-          padding: { top: 8, bottom: 8 },
-          readOnly,
-          renderLineHighlight: "none",
-          scrollBeyondLastLine: false,
-          stickyScroll: { enabled: false },
-          tabSize: 2,
-          wordWrap: "on",
-        }}
-      />
+              onChange(nextValue ?? "");
+            }}
+            options={{
+              automaticLayout: true,
+              domReadOnly: readOnly,
+              folding: true,
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 12,
+              glyphMargin: false,
+              lineDecorationsWidth: 8,
+              lineHeight: LINE_HEIGHT,
+              minimap: { enabled: false },
+              padding: { top: 8, bottom: 8 },
+              readOnly,
+              renderLineHighlight: "none",
+              scrollBeyondLastLine: false,
+              stickyScroll: { enabled: false },
+              tabSize: 2,
+              wordWrap: "on",
+            }}
+          />
+        </Suspense>
+      </ClientOnly>
     </div>
   );
 }
