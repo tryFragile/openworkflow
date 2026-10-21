@@ -9,7 +9,7 @@ import type { WorkflowRun } from "../core/workflow-run.js";
 import { createTestBackend } from "../postgres/test-backend.testsuite.js";
 import { Worker, resolveRetryPolicy } from "./worker.js";
 import { randomUUID } from "node:crypto";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 describe("Worker", () => {
   test("passes workflow input to handlers", async () => {
@@ -1561,6 +1561,7 @@ describe("Worker", () => {
 
   test("falls back to step retry defaults, independent from workflow retry policy", async () => {
     const backend = await createTestBackend();
+    const observedRetryDelays = observeRetryDelays(backend);
     const client = new OpenWorkflow({ backend });
 
     let stepAttempts = 0;
@@ -1588,7 +1589,6 @@ describe("Worker", () => {
     const worker = client.newWorker();
     const handle = await workflow.run();
 
-    const beforeFail = Date.now();
     await worker.tick();
     await sleep(100);
 
@@ -1598,9 +1598,9 @@ describe("Worker", () => {
     expect(afterFirst?.status).toBe("pending");
     expect(afterFirst?.availableAt).not.toBeNull();
     if (!afterFirst?.availableAt) throw new Error("Expected availableAt");
-    const retryDelayMs = afterFirst.availableAt.getTime() - beforeFail;
-    expect(retryDelayMs).toBeGreaterThanOrEqual(900);
-    expect(retryDelayMs).toBeLessThan(1500);
+    const firstDelayMs = retryDelayMs(afterFirst, observedRetryDelays);
+    expect(firstDelayMs).toBeGreaterThanOrEqual(900);
+    expect(firstDelayMs).toBeLessThan(1500);
 
     await sleep(1100);
     await worker.tick();
@@ -1682,6 +1682,7 @@ describe("Worker", () => {
 
   test("uses step-level retry overrides and terminal step limits", async () => {
     const backend = await createTestBackend();
+    const observedRetryDelays = observeRetryDelays(backend);
     const client = new OpenWorkflow({ backend });
 
     let stepAttempts = 0;
@@ -1718,7 +1719,6 @@ describe("Worker", () => {
     const worker = client.newWorker();
     const handle = await workflow.run();
 
-    const beforeFirstFail = Date.now();
     await worker.tick();
     await sleep(100);
 
@@ -1728,7 +1728,7 @@ describe("Worker", () => {
     expect(afterFirst?.status).toBe("pending");
     expect(afterFirst?.availableAt).not.toBeNull();
     if (!afterFirst?.availableAt) throw new Error("Expected availableAt");
-    const firstDelayMs = afterFirst.availableAt.getTime() - beforeFirstFail;
+    const firstDelayMs = retryDelayMs(afterFirst, observedRetryDelays);
     expect(firstDelayMs).toBeGreaterThanOrEqual(30);
     expect(firstDelayMs).toBeLessThan(180);
 
@@ -1745,6 +1745,7 @@ describe("Worker", () => {
 
   test("keeps retry budgets isolated per step name", async () => {
     const backend = await createTestBackend();
+    const observedRetryDelays = observeRetryDelays(backend);
     const client = new OpenWorkflow({ backend });
 
     const executionCounts = {
@@ -1767,8 +1768,9 @@ describe("Worker", () => {
       async ({ step }) => {
         const a = await step.run(
           { name: "step-a", retryPolicy: stepPolicy },
-          () => {
+          async () => {
             executionCounts.stepA++;
+            if (executionCounts.stepA === 1) await sleep(400);
             if (executionCounts.stepA < 3) {
               throw new Error("step-a failed");
             }
@@ -1794,7 +1796,6 @@ describe("Worker", () => {
     const worker = client.newWorker();
     const handle = await workflow.run();
 
-    const beforeFirst = Date.now();
     await worker.tick();
     let run = await waitForWorkflowRun(
       backend,
@@ -1804,13 +1805,12 @@ describe("Worker", () => {
     );
     expect(run.status).toBe("pending");
     if (!run.availableAt) throw new Error("Expected availableAt");
-    const firstDelayMs = retryDelayMs(run, beforeFirst);
+    const firstDelayMs = retryDelayMs(run, observedRetryDelays);
     expect(firstDelayMs).toBeGreaterThanOrEqual(80);
     expect(firstDelayMs).toBeLessThan(350);
 
     await sleepUntilAfter(run.availableAt);
     let previousAvailableAtMs = run.availableAt.getTime();
-    const beforeSecond = Date.now();
     await worker.tick();
     run = await waitForWorkflowRun(
       backend,
@@ -1822,13 +1822,12 @@ describe("Worker", () => {
     );
     expect(run.status).toBe("pending");
     if (!run.availableAt) throw new Error("Expected availableAt");
-    const secondDelayMs = retryDelayMs(run, beforeSecond);
+    const secondDelayMs = retryDelayMs(run, observedRetryDelays);
     expect(secondDelayMs).toBeGreaterThanOrEqual(180);
     expect(secondDelayMs).toBeLessThan(350);
 
     await sleepUntilAfter(run.availableAt);
     previousAvailableAtMs = run.availableAt.getTime();
-    const beforeThird = Date.now();
     await worker.tick();
     run = await waitForWorkflowRun(
       backend,
@@ -1840,7 +1839,7 @@ describe("Worker", () => {
     );
     expect(run.status).toBe("pending");
     if (!run.availableAt) throw new Error("Expected availableAt");
-    const thirdDelayMs = retryDelayMs(run, beforeThird);
+    const thirdDelayMs = retryDelayMs(run, observedRetryDelays);
     expect(thirdDelayMs).toBeGreaterThanOrEqual(80);
     expect(thirdDelayMs).toBeLessThan(350);
 
@@ -1857,6 +1856,7 @@ describe("Worker", () => {
 
   test("sleep and lease churn do not consume step retry budget", async () => {
     const backend = await createTestBackend();
+    const observedRetryDelays = observeRetryDelays(backend);
     const client = new OpenWorkflow({ backend });
 
     let stepAttempts = 0;
@@ -1874,8 +1874,9 @@ describe("Worker", () => {
 
         return await step.run(
           { name: "flaky", retryPolicy: stepPolicy },
-          () => {
+          async () => {
             stepAttempts++;
+            if (stepAttempts === 1) await sleep(400);
             if (stepAttempts < 3) {
               throw new Error("failed");
             }
@@ -1914,7 +1915,6 @@ describe("Worker", () => {
     await sleepUntilAfter(run.availableAt);
 
     // first failed step attempt should still use attempt 1 backoff (100ms)
-    const beforeFirstFail = Date.now();
     await worker.tick();
     run = await waitForWorkflowRun(
       backend,
@@ -1924,7 +1924,7 @@ describe("Worker", () => {
     );
     expect(run.status).toBe("pending");
     if (!run.availableAt) throw new Error("Expected availableAt");
-    const firstDelayMs = retryDelayMs(run, beforeFirstFail);
+    const firstDelayMs = retryDelayMs(run, observedRetryDelays);
     expect(firstDelayMs).toBeGreaterThanOrEqual(80);
     expect(firstDelayMs).toBeLessThan(350);
 
@@ -1932,7 +1932,6 @@ describe("Worker", () => {
     const previousAvailableAtMs = run.availableAt.getTime();
 
     // second failed step attempt should use attempt 2 backoff (200ms)
-    const beforeSecondFail = Date.now();
     await worker.tick();
     run = await waitForWorkflowRun(
       backend,
@@ -1944,7 +1943,7 @@ describe("Worker", () => {
     );
     expect(run.status).toBe("pending");
     if (!run.availableAt) throw new Error("Expected availableAt");
-    const secondDelayMs = retryDelayMs(run, beforeSecondFail);
+    const secondDelayMs = retryDelayMs(run, observedRetryDelays);
     expect(secondDelayMs).toBeGreaterThanOrEqual(180);
     expect(secondDelayMs).toBeLessThan(350);
 
@@ -2087,10 +2086,33 @@ async function sleepUntilAfter(date: Date | null | undefined): Promise<void> {
   }
 }
 
-function retryDelayMs(run: WorkflowRun, fallbackStartMs: number): number {
-  if (!run.availableAt) throw new Error("Expected availableAt timestamp");
+// Observe scheduling before persistence, excluding claim, execution, and query
+// latency. Match availableAt to the stored run so a changed timestamp still fails.
+function observeRetryDelays(backend: Backend): ReadonlyMap<number, number> {
+  const delays = new Map<number, number>();
+  const reschedule =
+    backend.rescheduleWorkflowRunAfterFailedStepAttempt.bind(backend);
+  const spy = vi
+    .spyOn(backend, "rescheduleWorkflowRunAfterFailedStepAttempt")
+    .mockImplementation((params) => {
+      const availableAtMs = params.availableAt.getTime();
+      delays.set(availableAtMs, availableAtMs - Date.now());
+      return reschedule(params);
+    });
+  onTestFinished(() => {
+    spy.mockRestore();
+  });
+  return delays;
+}
 
-  return run.availableAt.getTime() - fallbackStartMs;
+function retryDelayMs(
+  run: WorkflowRun,
+  observedDelays: ReadonlyMap<number, number>,
+): number {
+  if (!run.availableAt) throw new Error("Expected availableAt timestamp");
+  const delay = observedDelays.get(run.availableAt.getTime());
+  if (delay === undefined) throw new Error("Expected observed retry schedule");
+  return delay;
 }
 
 function sleep(ms: number): Promise<void> {
