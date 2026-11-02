@@ -3,7 +3,13 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     globalSetup: ["packages/openworkflow/postgres/vitest.global-setup.ts"],
-    exclude: ["**/dist", "benchmarks", "coverage", "examples", "node_modules"],
+    exclude: [
+      "**/dist",
+      "benchmarks",
+      "coverage",
+      "examples",
+      "**/node_modules/**",
+    ],
     coverage: {
       include: ["apps/**/*.ts", "packages/**/*.ts"],
       exclude: [
